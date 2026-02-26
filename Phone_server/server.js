@@ -13,6 +13,15 @@ const Agenda = require("agenda");
 
 require("dotenv").config();
 
+// Environment variables used by this server:
+//   MONGO_URI      - MongoDB connection string (already used)
+//   JWT_SECRET     - secret for signing tokens
+//   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER - Twilio credentials
+//   SERVER_URL     - base URL of this server (e.g. http://localhost:3000) used to build image URLs
+//   MEDIA_URL      - full URL to the image you want to send (overrides SERVER_URL + /images/IMAGE_NAME)
+//   IMAGE_NAME     - name of the file in the Image folder (default: Nelson.jpg)
+
+
 // Models
 const User = require("./models/User");
 const Contact = require("./models/Contact");
@@ -47,6 +56,9 @@ app.use(
 );
 app.use(express.json());
 app.use(fileUpload());
+
+// serve static images from the Image folder so Twilio can fetch them for MMS
+app.use('/images', express.static(path.join(__dirname, 'Image')));
 
 // ==================== AUTH MIDDLEWARE ====================
 const verifyToken = (req, res, next) => {
@@ -322,11 +334,16 @@ app.post("/send-batch-sms", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "No contacts to send to" });
     }
 
+    // determine which media URL should be sent
+    const resolvedMediaUrl =
+      `${process.env.SERVER_URL || "http://localhost:" + port}/images/"Nelson.jpg"`;
+
     // Queue the send job
     await agenda.schedule("now", "send-sms-batch", {
       userId,
       message,
       contactIds: contacts.map((c) => c._id.toString()),
+      mediaUrl: resolvedMediaUrl,
     });
 
     res.json({
@@ -347,7 +364,7 @@ mongoose
 
 // ==================== AGENDA JOB DEFINITION ====================
 agenda.define("send-sms-batch", async (job) => {
-  const { userId, message, contactIds } = job.attrs.data;
+  const { userId, message, contactIds, mediaUrl } = job.attrs.data;
 
   try {
     const contacts = await Contact.find({ _id: { $in: contactIds } });
@@ -383,6 +400,11 @@ agenda.define("send-sms-batch", async (job) => {
           body: message,
           from: process.env.TWILIO_NUMBER,
           to: contact.PhoneNumber,
+          // use URL supplied by job (or fall back to env/static path)
+          mediaUrl: [
+            mediaUrl || // should always be provided by job, but fallback just in case
+              `${process.env.SERVER_URL || "http://localhost:" + port}/images/Nelson.jpg`,
+          ],
         });
 
         // Update lastSentMessage timestamp

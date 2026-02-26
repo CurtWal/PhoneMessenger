@@ -8,6 +8,7 @@ function CommandSender() {
   const [contacts, setContacts] = useState([]);
   const [sending, setSending] = useState(false);
 
+
   // Fetch contacts on mount
   useEffect(() => {
     const fetchContacts = async () => {
