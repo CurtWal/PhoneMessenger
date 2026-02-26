@@ -1,16 +1,14 @@
 import React, { useCallback, useState, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 
-const FIELDS = [
-  "PhoneNumber"
-];
+const FIELDS = ["PhoneNumber"];
 
 export default function Upload() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [formRows, setFormRows] = useState([]);
   const [newRow, setNewRow] = useState(
-    FIELDS.reduce((acc, key) => ({ ...acc, [key]: "" }), {})
+    FIELDS.reduce((acc, key) => ({ ...acc, [key]: "" }), {}),
   );
 
   /** ─── Fetch CRM on load ─────────────────────── */
@@ -43,11 +41,18 @@ export default function Upload() {
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
     })
-      .then((res) => res.json())
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          console.error("UPLOAD ERROR:", data);
+          throw new Error(data.error || "Upload failed");
+        }
+        return data;
+      })
       .then(() =>
         fetch(`${import.meta.env.VITE_API_URL}/crm/${userId}`, {
           headers: { Authorization: `Bearer ${token}` },
-        })
+        }),
       )
       .then((res) => res.json())
       .then((contacts) => setFormRows(contacts))
@@ -61,7 +66,7 @@ export default function Upload() {
     const { name, value } = e.target;
 
     setFormRows((prev) =>
-      prev.map((row, i) => (i === idx ? { ...row, [name]: value } : row))
+      prev.map((row, i) => (i === idx ? { ...row, [name]: value } : row)),
     );
   };
 
@@ -72,14 +77,17 @@ export default function Upload() {
 
     const token = localStorage.getItem("token");
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/crm/${row._id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/crm/${row._id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ [name]: value }),
         },
-        body: JSON.stringify({ [name]: value }),
-      });
+      );
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -120,9 +128,7 @@ export default function Upload() {
 
     const result = await res.json();
     if (result.success) {
-      setFormRows((prev) =>
-        prev.map((row) => ({ ...row, _unsaved: false }))
-      );
+      setFormRows((prev) => prev.map((row) => ({ ...row, _unsaved: false })));
     }
   };
 
@@ -159,66 +165,72 @@ export default function Upload() {
   /** ────────────────────────────────────────────── */
 
   return (
-    <div className="p-6">
+    <div className="h-screen flex flex-col p-6 overflow-hidden">
       {loading && <p className="text-gray-500">Loading...</p>}
       {error && <p className="text-red-500">{error}</p>}
 
       <h2 className="text-2xl font-semibold mb-4">CRM Contacts</h2>
 
-     <div className="w-full mt-4">
-  {/* Scroll Container */}
-  <div className="overflow-x-auto overflow-y-auto max-h-[75vh] border rounded-lg shadow-sm">
-    <table className="min-w-max border-collapse text-sm">
-      
-      {/* TOP BUTTON ROW */}
-      <thead className="sticky top-0 bg-white z-20 shadow-sm">
-        <tr>
-          <th colSpan={FIELDS.length + 1} className="p-3 border-b border-gray-300">
-            <div className="flex items-center justify-start gap-3">
-              <button
-                type="button"
-                onClick={handleSaveRows}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-              >
-                Save New Rows
-              </button>
+      <div  className="w-full mt-4 flex-1 flex flex-col overflow-hidden">
+        {/* Scroll Container */}
+        <div className="flex-1 overflow-auto border rounded-lg shadow-sm">
+          <table className="min-w-max border-collapse text-sm">
+            {/* TOP BUTTON ROW */}
+            <thead className="sticky top-0 bg-white z-20 shadow-sm">
+              <tr>
+                <th
+                  colSpan={FIELDS.length + 1}
+                  className="p-3 border-b border-gray-300"
+                >
+                  <div className="flex items-center justify-start gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSaveRows}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                    >
+                      Save New Rows
+                    </button>
 
-              <button
-                type="button"
-                onClick={handleAddRow}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
-              >
-                Add Row
-              </button>
+                    <button
+                      type="button"
+                      onClick={handleAddRow}
+                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
+                    >
+                      Add Row
+                    </button>
 
-              <button
-                type="button"
-                onClick={handleDeleteAll}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
-              >
-                Delete All CRM
-              </button>
-            </div>
-          </th>
-        </tr>
+                    <button
+                      type="button"
+                      onClick={handleDeleteAll}
+                      className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
+                    >
+                      Delete All CRM
+                    </button>
+                  </div>
+                </th>
+              </tr>
 
-        {/* HEADER ROW */}
-        <tr className="bg-gray-50">
-          {FIELDS.map((key) => (
-            <th
-              key={key}
-              className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 whitespace-nowrap"
-            >
-              {key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-            </th>
-          ))}
-          <th className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 whitespace-nowrap">Actions</th>
-        </tr>
-      </thead>
+              {/* HEADER ROW */}
+              <tr className="bg-gray-50">
+                {FIELDS.map((key) => (
+                  <th
+                    key={key}
+                    className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 whitespace-nowrap"
+                  >
+                    {key
+                      .replace(/_/g, " ")
+                      .replace(/\b\w/g, (l) => l.toUpperCase())}
+                  </th>
+                ))}
+                <th className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 whitespace-nowrap">
+                  Actions
+                </th>
+              </tr>
+            </thead>
 
-      {/* NEW ROW INPUT */}
-      <tbody>
-        {/* <tr className="bg-green-50">
+            {/* NEW ROW INPUT */}
+            <tbody>
+              {/* <tr className="bg-green-50">
           {FIELDS.map((key) => (
             <td key={key} className="border border-gray-300 p-2">
               <input
@@ -233,51 +245,58 @@ export default function Upload() {
           <td className="border border-gray-300 p-2 text-center">—</td>
         </tr> */}
 
-        {/* ROWS FROM DATABASE */}
-        {formRows.map((row, idx) => (
-          <tr key={idx} className="hover:bg-blue-500 bg-white" >
-            {FIELDS.map((key) => (
-              <td key={key} className="border border-gray-300 p-2 text-black">
-                <input
-                  type="text"
-                  name={key}
-                  value={row[key] ?? ""}
-                  onChange={(e) => handleInputChange(e, idx)}
-                  onBlur={(e) => handleSaveField(idx, e.target.name, e.target.value)}
-                  className="w-full px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400 focus:outline-none text-sm"
-                />
-              </td>
-            ))}
+              {/* ROWS FROM DATABASE */}
+              {formRows.map((row, idx) => (
+                <tr key={idx} className="hover:bg-blue-500 bg-white">
+                  {FIELDS.map((key) => (
+                    <td
+                      key={key}
+                      className="border border-gray-300 p-2 text-black"
+                    >
+                      <input
+                        type="text"
+                        name={key}
+                        value={row[key] ?? ""}
+                        onChange={(e) => handleInputChange(e, idx)}
+                        onBlur={(e) =>
+                          handleSaveField(idx, e.target.name, e.target.value)
+                        }
+                        className="w-full px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400 focus:outline-none text-sm"
+                      />
+                    </td>
+                  ))}
 
-            {/* REMOVE BUTTON */}
-            <td className="border border-gray-300 p-2 text-center">
-              <button
-                type="button"
-                onClick={() => handleRemoveRow(idx)}
-                className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 transition"
-              >
-                Remove
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
+                  {/* REMOVE BUTTON */}
+                  <td className="border border-gray-300 p-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRow(idx)}
+                      className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 transition"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-  {/* FILE DROPZONE */}
-  <div
-    {...getRootProps()}
-    className="mt-4 border-2 border-dashed border-gray-400 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition bg-white"
-  >
-    <input {...getInputProps()} />
-    {isDragActive ? (
-      <p className="text-blue-600 font-medium">Drop the files here...</p>
-    ) : (
-      <p className="text-gray-700">Drag & drop CSV/Excel here, or click to select</p>
-    )}
-  </div>
-</div>
+        {/* FILE DROPZONE */}
+        <div
+          {...getRootProps()}
+          className="mt-4 border-2 border-dashed border-gray-400 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition bg-white"
+        >
+          <input {...getInputProps()} />
+          {isDragActive ? (
+            <p className="text-blue-600 font-medium">Drop the files here...</p>
+          ) : (
+            <p className="text-gray-700">
+              Drag & drop CSV/Excel here, or click to select
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

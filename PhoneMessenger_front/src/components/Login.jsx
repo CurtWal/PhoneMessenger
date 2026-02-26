@@ -26,19 +26,19 @@ function Login() {
   return (
     <div className='dark:text-white p-4 max-w-md mx-auto mt-10 border rounded bg-white dark:bg-gray-800'>
       <form onSubmit={handleLogin} className=' flex flex-col gap-4'>   
-        <h2 className='text-black text-2xl font-semibold'>Login</h2>
+        <h2 className='text-white text-2xl font-semibold'>Login</h2>
         <div className='flex flex-col gap-4'>
           <div className='flex flex-col'>
-            <label className='flex justify-start text-black'>Email:</label>
+            <label className='flex justify-start text-white'>Email:</label>
             <input className="bg-gray-300 text-black" type="email" name="email" required />
           </div>
           <div className='flex flex-col'>
-            <label className="flex justify-start text-black">Password:</label>
+            <label className="flex justify-start text-white">Password:</label>
             <input className="bg-gray-300 text-black" type="password" name="password" required />
           </div>
         </div>
         <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">Login</button>
-        <p className="text-black text-sm">
+        <p className="text-white text-sm">
           Don't have an account? <a href="/register" className="text-blue-600 hover:underline">Register here</a>
         </p>
       </form>

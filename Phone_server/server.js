@@ -21,7 +21,6 @@ require("dotenv").config();
 //   MEDIA_URL      - full URL to the image you want to send (overrides SERVER_URL + /images/IMAGE_NAME)
 //   IMAGE_NAME     - name of the file in the Image folder (default: Nelson.jpg)
 
-
 // Models
 const User = require("./models/User");
 const Contact = require("./models/Contact");
@@ -29,7 +28,7 @@ const Contact = require("./models/Contact");
 // Twilio setup
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
+  process.env.TWILIO_AUTH_TOKEN,
 );
 
 // Agenda setup for background jobs
@@ -48,17 +47,17 @@ app.use(
     origin: [
       "http://localhost:5173",
       "http://localhost:3001",
-      process.env.FRONTEND_URL
+      process.env.FRONTEND_URL,
     ],
     credentials: true,
     methods: ["GET", "POST", "DELETE", "PUT", "PATCH"],
-  })
+  }),
 );
 app.use(express.json());
 app.use(fileUpload());
 
 // serve static images from the Image folder so Twilio can fetch them for MMS
-app.use('/images', express.static(path.join(__dirname, 'Image')));
+app.use("/images", express.static(path.join(__dirname, "Image")));
 
 // ==================== AUTH MIDDLEWARE ====================
 const verifyToken = (req, res, next) => {
@@ -92,10 +91,14 @@ app.post("/register", async (req, res) => {
     const user = await User.create({ name, email, password });
 
     // use process.env.JWT_SECRET at sign time
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET || "your-secret-key", { expiresIn: "7d" });
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET || "your-secret-key",
+      { expiresIn: "7d" },
+    );
     res.json({
       success: true,
-      user: { id: user._id, name: user.name, email: user.email},
+      user: { id: user._id, name: user.name, email: user.email },
       token,
     });
   } catch (err) {
@@ -125,9 +128,8 @@ app.post("/login", async (req, res) => {
     const token = jwt.sign(
       { id: user._id, email: user.email },
       process.env.JWT_SECRET || "secret_key",
-      { expiresIn: "30d" }
+      { expiresIn: "30d" },
     );
-
     res.json({
       success: true,
       token,
@@ -138,7 +140,6 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ error: "Login failed" });
   }
 });
-
 
 // ==================== CRM ROUTES ====================
 app.get("/crm/:userId", verifyToken, async (req, res) => {
@@ -156,6 +157,30 @@ app.get("/crm/:userId", verifyToken, async (req, res) => {
   }
 });
 
+function normalizePhoneNumber(phone) {
+  if (!phone) return null;
+
+  let digits = String(phone).replace(/\D/g, "");
+
+  // If 11 digits and starts with 1 → valid US
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return "+" + digits;
+  }
+
+  // If 10 digits → assume US and prepend 1
+  if (digits.length === 10) {
+    return "+1" + digits;
+  }
+
+  // If more than 11 digits but ends with valid 10 digits
+  if (digits.length > 11) {
+    digits = digits.slice(-10);
+    return "+1" + digits;
+  }
+
+  return null;
+}
+
 app.post("/crm-upload", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -170,11 +195,14 @@ app.post("/crm-upload", verifyToken, async (req, res) => {
     const sheet = workBook.Sheets[sheetName];
     let data = xlsx.utils.sheet_to_json(sheet);
 
-    const REQUIRED_FIELDS = [
-      "PhoneNumber"
-    ];
+    if (!data.length) {
+      return res.status(400).json({ error: "File is empty" });
+    }
 
+    const REQUIRED_FIELDS = ["Phone Number"];
     const allColumns = Object.keys(data[0] || {});
+    console.log("COLUMNS FROM FILE:", allColumns);
+
     const missingRequired = REQUIRED_FIELDS.filter(
       (field) => !allColumns.includes(field)
     );
@@ -187,55 +215,62 @@ app.post("/crm-upload", verifyToken, async (req, res) => {
       });
     }
 
+    let skippedRows = [];
 
-    let errors = [];
-    data = data.map((row, idx) => {
-      const newRow = {};
-      for (const key in row) {
-        newRow[key] = row[key] == null ? "" : String(row[key]);
-      }
+    // 🔥 Normalize + Skip Invalid
+    data = data
+      .map((row, idx) => {
+        const rawPhone = row["Phone Number"];
+        const phoneValue = normalizePhoneNumber(rawPhone);
 
-      // Validate PhoneNumber field
-      const phoneRegex = /^\+?[0-9\s\-().]{7,}$/;
-      const phoneValue = newRow.PhoneNumber ? newRow.PhoneNumber.trim() : "";
-      if (!phoneValue || !phoneRegex.test(phoneValue)) {
-        errors.push(`Row ${idx + 2}: Invalid or missing phone number`);
-      }
-
-      // Validate required field exists
-      REQUIRED_FIELDS.forEach((field) => {
-        if (!newRow[field] || newRow[field].trim() === "") {
-          errors.push(`Row ${idx + 2}: Missing ${field}`);
+        if (!phoneValue) {
+          skippedRows.push(idx + 2); // Excel row number
+          return null;
         }
-      });
 
-      return newRow;
-    });
+        return {
+          PhoneNumber: phoneValue,
+        };
+      })
+      .filter(Boolean); // remove nulls
 
-    if (errors.length > 0) {
-      return res.status(400).json({ error: errors.join("; ") });
-    }
-
-    const ALL_FIELDS = [...REQUIRED_FIELDS];
+    // 🔥 Deduplicate within upload
     const seen = new Set();
     data = data.filter((row) => {
-      const key = ALL_FIELDS.map((f) =>
-        String(row[f] || "").toLowerCase().trim()
-      ).join("|");
+      const key = row.PhoneNumber;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
 
-    const contactsToInsert = data.map((row) => ({
+    // 🔥 Optional: Prevent duplicates already in DB
+    const existingNumbers = await Contact.find({
       userId,
-      ...row,
-    }));
+      PhoneNumber: { $in: data.map((d) => d.PhoneNumber) },
+    }).select("PhoneNumber");
 
-    await Contact.insertMany(contactsToInsert);
+    const existingSet = new Set(existingNumbers.map((c) => c.PhoneNumber));
 
-    console.log(`✅ Uploaded ${data.length} contacts for user ${userId}`);
-    res.json({ success: true, count: data.length });
+    const contactsToInsert = data
+      .filter((row) => !existingSet.has(row.PhoneNumber))
+      .map((row) => ({
+        userId,
+        ...row,
+      }));
+
+    if (contactsToInsert.length > 0) {
+      await Contact.insertMany(contactsToInsert);
+    }
+
+    console.log(`✅ Inserted ${contactsToInsert.length}`);
+    console.log(`⏭ Skipped ${skippedRows.length}`);
+
+    res.json({
+      success: true,
+      inserted: contactsToInsert.length,
+      skippedInvalid: skippedRows.length,
+      skippedDuplicates: existingSet.size,
+    });
   } catch (error) {
     console.error("❌ Error uploading file:", error);
     res.status(500).json({ error: "Failed to upload file" });
@@ -251,10 +286,18 @@ app.post("/crm-add", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Missing contacts array" });
     }
 
-    const contactsToInsert = contacts.map(({ _unsaved, ...row }) => ({
-      userId,
-      ...row,
-    }));
+    const contactsToInsert = contacts
+      .map(({ _unsaved, ...row }) => {
+        const normalized = normalizePhoneNumber(row.PhoneNumber);
+        if (!normalized) return null;
+
+        return {
+          userId,
+          ...row,
+          PhoneNumber: normalized,
+        };
+      })
+      .filter(Boolean);
 
     await Contact.insertMany(contactsToInsert);
     res.json({ success: true, count: contactsToInsert.length });
@@ -301,7 +344,7 @@ app.patch("/crm/:id", verifyToken, async (req, res) => {
     const updated = await Contact.findOneAndUpdate(
       { _id: contactId, userId },
       { $set: update },
-      { new: true }
+      { new: true },
     );
 
     if (!updated) {
@@ -316,7 +359,6 @@ app.patch("/crm/:id", verifyToken, async (req, res) => {
 });
 
 // ==================== SEND BATCH SMS ====================
-
 
 app.post("/send-batch-sms", verifyToken, async (req, res) => {
   try {
@@ -335,8 +377,7 @@ app.post("/send-batch-sms", verifyToken, async (req, res) => {
     }
 
     // determine which media URL should be sent
-    const resolvedMediaUrl =
-      `${process.env.SERVER_URL || "http://localhost:" + port}/images/"Nelson.jpg"`;
+    const resolvedMediaUrl = `${process.env.SERVER_URL || "http://localhost:" + port}/images/Nelson.jpg`;
 
     // Queue the send job
     await agenda.schedule("now", "send-sms-batch", {
@@ -353,6 +394,52 @@ app.post("/send-batch-sms", verifyToken, async (req, res) => {
   } catch (error) {
     console.error("❌ Error queuing SMS:", error);
     res.status(500).json({ error: "Failed to queue SMS" });
+  }
+});
+
+app.post("/sms-webhook", async (req, res) => {
+  try {
+    const incomingMessage = (req.body.Body || "").trim().toLowerCase();
+    const fromNumber = req.body.From;
+
+    const stopKeywords = [
+      "stop",
+      "stopall",
+      "unsubscribe",
+      "cancel",
+      "end",
+      "quit",
+    ];
+    const startKeywords = ["start", "unstop"];
+
+    const contact = await Contact.findOne({ PhoneNumber: fromNumber });
+
+    if (!contact) {
+      return res.sendStatus(200);
+    }
+
+    // Handle STOP
+    if (stopKeywords.includes(incomingMessage)) {
+      contact.optedOut = true;
+      contact.optedOutAt = new Date();
+      await contact.save();
+
+      console.log(`🚫 ${fromNumber} opted out`);
+    }
+
+    // Handle START / UNSTOP
+    if (startKeywords.includes(incomingMessage)) {
+      contact.optedOut = false;
+      contact.optedOutAt = null;
+      await contact.save();
+
+      console.log(`✅ ${fromNumber} opted back in`);
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.sendStatus(500);
   }
 });
 
@@ -380,6 +467,12 @@ agenda.define("send-sms-batch", async (job) => {
     let skipped = 0;
 
     for (const contact of contacts) {
+      if (contact.optedOut) {
+        skipped++;
+        console.log(`🚫 ${contact.PhoneNumber} has opted out`);
+        continue;
+      }
+
       if (!contact.PhoneNumber) {
         skipped++;
         continue; // Skip if no phone number
@@ -402,8 +495,8 @@ agenda.define("send-sms-batch", async (job) => {
           to: contact.PhoneNumber,
           // use URL supplied by job (or fall back to env/static path)
           mediaUrl: [
-            mediaUrl || // should always be provided by job, but fallback just in case
-              `${process.env.SERVER_URL || "http://localhost:" + port}/images/Nelson.jpg`,
+            // should always be provided by job, but fallback just in case
+            `${process.env.SERVER_URL || "http://localhost:" + port}/images/Nelson.jpg`,
           ],
         });
 
@@ -417,13 +510,13 @@ agenda.define("send-sms-batch", async (job) => {
       } catch (err) {
         console.error(
           `❌ Failed to send SMS to ${contact.PhoneNumber}:`,
-          err.message
+          err.message,
         );
       }
     }
 
     console.log(
-      `📊 Job completed: Sent ${sent}, Skipped ${skipped} out of ${contacts.length}`
+      `📊 Job completed: Sent ${sent}, Skipped ${skipped} out of ${contacts.length}`,
     );
   } catch (error) {
     console.error("❌ Error in send-sms-batch job:", error);
