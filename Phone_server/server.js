@@ -13,14 +13,6 @@ const Agenda = require("agenda");
 
 require("dotenv").config();
 
-// Environment variables used by this server:
-//   MONGO_URI      - MongoDB connection string (already used)
-//   JWT_SECRET     - secret for signing tokens
-//   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER - Twilio credentials
-//   SERVER_URL     - base URL of this server (e.g. http://localhost:3000) used to build image URLs
-//   MEDIA_URL      - full URL to the image you want to send (overrides SERVER_URL + /images/IMAGE_NAME)
-//   IMAGE_NAME     - name of the file in the Image folder (default: Nelson.jpg)
-
 // Models
 const User = require("./models/User");
 const Contact = require("./models/Contact");
@@ -449,24 +441,23 @@ mongoose
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// ==================== AGENDA JOB DEFINITION ====================
-agenda.define("send-sms-batch", async (job) => {
-  const { userId, message, contactIds, mediaUrl } = job.attrs.data;
+// ==================== BATCH SENDING CONFIGURATION ====================
+const BATCH_SIZE = process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE) : 100; // messages per batch
+const BATCH_DELAY_MS = process.env.BATCH_DELAY_MS ? parseInt(process.env.BATCH_DELAY_MS) : 2000; // delay between batches (ms)
 
-  try {
-    const contacts = await Contact.find({ _id: { $in: contactIds } });
+// Helper function to send messages in batches with delays
+async function sendMessagesInBatches(contacts, message, now) {
+  let sent = 0;
+  let skipped = 0;
 
-    if (contacts.length === 0) {
-      console.log("❌ No contacts found for batch send");
-      return;
-    }
+  for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
+    const batch = contacts.slice(i, i + BATCH_SIZE);
+    const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(contacts.length / BATCH_SIZE);
 
-    // Check rate limiting and filter contacts that can receive messages
-    const now = new Date();
-    let sent = 0;
-    let skipped = 0;
+    console.log(`📦 Processing batch ${batchNumber}/${totalBatches} (${batch.length} contacts)`);
 
-    for (const contact of contacts) {
+    for (const contact of batch) {
       if (contact.optedOut) {
         skipped++;
         console.log(`🚫 ${contact.PhoneNumber} has opted out`);
@@ -514,6 +505,33 @@ agenda.define("send-sms-batch", async (job) => {
         );
       }
     }
+
+    // Add delay between batches (except after the last batch)
+    if (i + BATCH_SIZE < contacts.length) {
+      console.log(`⏱️  Waiting ${BATCH_DELAY_MS}ms before next batch...`);
+      await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+    }
+  }
+
+  return { sent, skipped };
+}
+
+// ==================== AGENDA JOB DEFINITION ====================
+agenda.define("send-sms-batch", async (job) => {
+  const { userId, message, contactIds, mediaUrl } = job.attrs.data;
+
+  try {
+    const contacts = await Contact.find({ _id: { $in: contactIds } });
+
+    if (contacts.length === 0) {
+      console.log("❌ No contacts found for batch send");
+      return;
+    }
+
+    const now = new Date();
+    console.log(`🚀 Starting batch send to ${contacts.length} contacts with batch size ${BATCH_SIZE}`);
+
+    const { sent, skipped } = await sendMessagesInBatches(contacts, message, now);
 
     console.log(
       `📊 Job completed: Sent ${sent}, Skipped ${skipped} out of ${contacts.length}`,
