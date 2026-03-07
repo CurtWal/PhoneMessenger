@@ -69,6 +69,12 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+
+// health check route
+app.get("/ping", (req, res) => {
+  res.status(200).json({ status: "alive" });
+});
+
 // ==================== AUTH ROUTES ====================
 app.post("/register", async (req, res) => {
   try {
