@@ -29,6 +29,7 @@ const agenda = new Agenda({
     address: process.env.MONGO_URI,
     collection: "jobs",
   },
+  maxConcurrency: 1, // Ensure only one batch job runs at a time
 });
 
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -367,30 +368,49 @@ app.post("/send-batch-sms", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Message cannot be empty" });
     }
 
-    // Fetch all contacts for this user
+    // ✅ ATOMIC lock — only succeeds for ONE request even under race conditions
+    const batchId = new Date().toISOString();
+    const locked = await User.findOneAndUpdate(
+      { _id: userId, isSending: { $in: [false, null, undefined] } }, // only lock if NOT already sending
+      { $set: { isSending: true, sendingBatchId: batchId } },
+      { new: true }
+    );
+
+    if (!locked) {
+      return res.status(400).json({ 
+        error: "A send job is already active. Please wait for it to complete." 
+      });
+    }
+
     const contacts = await Contact.find({ userId });
 
     if (contacts.length === 0) {
+      // Release lock immediately if nothing to send
+      await User.findByIdAndUpdate(userId, { isSending: false, sendingBatchId: null });
       return res.status(400).json({ error: "No contacts to send to" });
     }
 
-    // determine which media URL should be sent
-    const resolvedMediaUrl = `${process.env.SERVER_URL || "http://localhost:" + port}/images/Nelson.jpg`;
+    const resolvedMediaUrl = `${process.env.SERVER_URL}/images/Nelson.jpg`;
 
-    // Queue the send job
+    // Cancel any stale jobs just in case
+    await agenda.cancel({ name: "send-sms-batch", "data.userId": userId });
+
     await agenda.schedule("now", "send-sms-batch", {
       userId,
       message,
       contactIds: contacts.map((c) => c._id.toString()),
       mediaUrl: resolvedMediaUrl,
+      batchId,
     });
 
     res.json({
       success: true,
-      message: `✅ Message queued for sending to ${contacts.length} contacts. You can close this page.`,
+      message: `✅ Message queued for ${contacts.length} contacts. You can close this page.`,
     });
   } catch (error) {
     console.error("❌ Error queuing SMS:", error);
+    // Make sure to release lock on error
+    await User.findByIdAndUpdate(req.user.id, { isSending: false, sendingBatchId: null });
     res.status(500).json({ error: "Failed to queue SMS" });
   }
 });
@@ -452,37 +472,42 @@ const BATCH_SIZE = process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE) : 1
 const BATCH_DELAY_MS = process.env.BATCH_DELAY_MS ? parseInt(process.env.BATCH_DELAY_MS) : 2000; // delay between batches (ms)
 
 // Helper function to send messages in batches with delays
-async function sendMessagesInBatches(contacts, message, now) {
+async function sendMessagesInBatches(contacts, message, now, batchId) {
   let sent = 0;
   let skipped = 0;
+  const oneWeekAgo = new Date(now - ONE_WEEK_MS);
 
   for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
     const batch = contacts.slice(i, i + BATCH_SIZE);
     const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(contacts.length / BATCH_SIZE);
-
-    console.log(`📦 Processing batch ${batchNumber}/${totalBatches} (${batch.length} contacts)`);
+    console.log(`📦 Batch ${batchNumber}/${totalBatches} (${batch.length} contacts)`);
 
     for (const contact of batch) {
-      if (contact.optedOut) {
+      if (!contact.PhoneNumber || contact.optedOut) {
         skipped++;
-        console.log(`🚫 ${contact.PhoneNumber} has opted out`);
         continue;
       }
 
-      if (!contact.PhoneNumber) {
-        skipped++;
-        continue; // Skip if no phone number
-      }
+      // ✅ ATOMIC: claim this contact for this batchId only if not already sent
+      // This prevents duplicate sends even if two job instances somehow run
+      const claimed = await Contact.findOneAndUpdate(
+        {
+          _id: contact._id,
+          lastBatchId: { $ne: batchId }, // not already sent in this batch
+          $or: [
+            { lastSentMessage: null },
+            { lastSentMessage: { $lt: oneWeekAgo } }, // rate limit check
+          ],
+        },
+        { $set: { lastBatchId: batchId, lastSentMessage: now } },
+        { new: true }
+      );
 
-      // Check if contact can receive (rate limiting)
-      if (contact.lastSentMessage) {
-        const timeSinceLastMessage = now - new Date(contact.lastSentMessage);
-        if (timeSinceLastMessage < ONE_WEEK_MS) {
-          skipped++;
-          console.log(`⏸️ ${contact.PhoneNumber} is rate limited`);
-          continue;
-        }
+      if (!claimed) {
+        skipped++;
+        console.log(`⏭️ ${contact.PhoneNumber} skipped (rate limited or already sent)`);
+        continue;
       }
 
       try {
@@ -490,31 +515,22 @@ async function sendMessagesInBatches(contacts, message, now) {
           body: message,
           from: process.env.TWILIO_NUMBER,
           to: contact.PhoneNumber,
-          // use URL supplied by job (or fall back to env/static path)
-          mediaUrl: [
-            // should always be provided by job, but fallback just in case
-            `${process.env.SERVER_URL || "http://localhost:" + port}/images/Nelson.jpg`,
-          ],
+          mediaUrl: [`${process.env.SERVER_URL}/images/Nelson.jpg`],
         });
-
-        // Update lastSentMessage timestamp
-        await Contact.findByIdAndUpdate(contact._id, {
-          lastSentMessage: now,
-        });
-
         sent++;
-        console.log(`✅ SMS sent to ${contact.PhoneNumber}`);
+        console.log(`✅ Sent to ${contact.PhoneNumber}`);
       } catch (err) {
-        console.error(
-          `❌ Failed to send SMS to ${contact.PhoneNumber}:`,
-          err.message,
-        );
+        console.error(`❌ Failed to send to ${contact.PhoneNumber}:`, err.message);
+        // Roll back the claim so it can be retried next batch
+        await Contact.findByIdAndUpdate(contact._id, {
+          lastBatchId: null,
+          lastSentMessage: contact.lastSentMessage, // restore original
+        });
       }
     }
 
-    // Add delay between batches (except after the last batch)
     if (i + BATCH_SIZE < contacts.length) {
-      console.log(`⏱️  Waiting ${BATCH_DELAY_MS}ms before next batch...`);
+      console.log(`⏱️ Waiting ${BATCH_DELAY_MS}ms...`);
       await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
     }
   }
@@ -524,7 +540,7 @@ async function sendMessagesInBatches(contacts, message, now) {
 
 // ==================== AGENDA JOB DEFINITION ====================
 agenda.define("send-sms-batch", async (job) => {
-  const { userId, message, contactIds, mediaUrl } = job.attrs.data;
+  const { userId, message, contactIds, mediaUrl, batchId } = job.attrs.data;
 
   try {
     const contacts = await Contact.find({ _id: { $in: contactIds } });
@@ -535,16 +551,18 @@ agenda.define("send-sms-batch", async (job) => {
     }
 
     const now = new Date();
-    console.log(`🚀 Starting batch send to ${contacts.length} contacts with batch size ${BATCH_SIZE}`);
+    console.log(`🚀 Starting batch send: ${contacts.length} contacts, batchId: ${batchId}`);
 
-    const { sent, skipped } = await sendMessagesInBatches(contacts, message, now);
+    const { sent, skipped } = await sendMessagesInBatches(contacts, message, now, batchId);
 
-    console.log(
-      `📊 Job completed: Sent ${sent}, Skipped ${skipped} out of ${contacts.length}`,
-    );
+    console.log(`📊 Completed: Sent ${sent}, Skipped ${skipped}`);
   } catch (error) {
     console.error("❌ Error in send-sms-batch job:", error);
     throw error;
+  } finally {
+    // ✅ Always release the lock, even on failure
+    await User.findByIdAndUpdate(userId, { isSending: false, sendingBatchId: null });
+    console.log(`🔓 Send lock released for user ${userId}`);
   }
 });
 

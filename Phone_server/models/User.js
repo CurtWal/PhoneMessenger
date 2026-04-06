@@ -6,6 +6,8 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, default: "user" }, // can be "admin" later
+  isSending: { type: Boolean, default: false },
+  sendingBatchId: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
   auto_follow_up_enabled: { type: Boolean, default: false },
   auto_follow_up_start_date: { type: Date, default: null },

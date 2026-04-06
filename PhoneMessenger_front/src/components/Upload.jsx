@@ -166,17 +166,17 @@ export default function Upload() {
 
   return (
     <div className="h-screen flex flex-col p-6 overflow-hidden">
-      {loading && <p className="text-gray-500">Loading...</p>}
-      {error && <p className="text-red-500">{error}</p>}
+      {loading && <p className="text-gray-500 dark:text-gray-400">Loading...</p>}
+      {error && <p className="text-red-500 dark:text-red-400">{error}</p>}
 
-      <h2 className="text-2xl font-semibold mb-4">CRM Contacts</h2>
+      <h2 className="text-gray-900 dark:text-white text-2xl font-semibold mb-4">CRM Contacts</h2>
 
       <div  className="w-full mt-4 flex-1 flex flex-col overflow-hidden">
         {/* Scroll Container */}
         <div className="flex-1 overflow-auto border rounded-lg shadow-sm">
           <table className="min-w-max border-collapse text-sm">
             {/* TOP BUTTON ROW */}
-            <thead className="sticky top-0 bg-white z-20 shadow-sm">
+            <thead className="sticky top-0 bg-white dark:bg-gray-800 z-20 shadow-sm">
               <tr>
                 <th
                   colSpan={FIELDS.length + 1}
@@ -211,18 +211,18 @@ export default function Upload() {
               </tr>
 
               {/* HEADER ROW */}
-              <tr className="bg-gray-50">
+              <tr className="bg-gray-50 dark:bg-gray-700">
                 {FIELDS.map((key) => (
                   <th
                     key={key}
-                    className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 whitespace-nowrap"
+                    className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap"
                   >
                     {key
                       .replace(/_/g, " ")
                       .replace(/\b\w/g, (l) => l.toUpperCase())}
                   </th>
                 ))}
-                <th className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 whitespace-nowrap">
+                <th className="px-3 py-2 border border-gray-300 text-left font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
                   Actions
                 </th>
               </tr>
@@ -247,11 +247,11 @@ export default function Upload() {
 
               {/* ROWS FROM DATABASE */}
               {formRows.map((row, idx) => (
-                <tr key={idx} className="hover:bg-blue-500 bg-white">
+                <tr key={idx} className="hover:bg-gray-100 dark:hover:bg-gray-600 bg-white dark:bg-gray-800">
                   {FIELDS.map((key) => (
                     <td
                       key={key}
-                      className="border border-gray-300 p-2 text-black"
+                      className="border border-gray-300 p-2 text-gray-900 dark:text-white"
                     >
                       <input
                         type="text"
@@ -261,7 +261,7 @@ export default function Upload() {
                         onBlur={(e) =>
                           handleSaveField(idx, e.target.name, e.target.value)
                         }
-                        className="w-full px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400 focus:outline-none text-sm"
+                        className="w-full px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400 focus:outline-none text-sm text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                       />
                     </td>
                   ))}
@@ -285,13 +285,13 @@ export default function Upload() {
         {/* FILE DROPZONE */}
         <div
           {...getRootProps()}
-          className="mt-4 border-2 border-dashed border-gray-400 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition bg-white"
+          className="mt-4 border-2 border-dashed border-gray-400 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900 transition bg-white dark:bg-gray-800"
         >
           <input {...getInputProps()} />
           {isDragActive ? (
             <p className="text-blue-600 font-medium">Drop the files here...</p>
           ) : (
-            <p className="text-gray-700">
+            <p className="text-gray-700 dark:text-gray-300">
               Drag & drop CSV/Excel here, or click to select
             </p>
           )}
