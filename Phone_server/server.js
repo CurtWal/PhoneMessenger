@@ -48,6 +48,7 @@ app.use(
 );
 app.use(express.json());
 app.use(fileUpload());
+app.use(express.urlencoded({ extended: false }));
 
 // serve static images from the Image folder so Twilio can fetch them for MMS
 app.use("/images", express.static(path.join(__dirname, "Image")));
@@ -417,6 +418,11 @@ app.post("/send-batch-sms", verifyToken, async (req, res) => {
 
 app.post("/sms-webhook", async (req, res) => {
   try {
+     // Guard against empty body
+    if (!req.body) {
+      console.warn("⚠️ Webhook received empty body");
+      return res.sendStatus(200);
+    }
     const incomingMessage = (req.body.Body || "").trim().toLowerCase();
     const fromNumber = req.body.From;
 
