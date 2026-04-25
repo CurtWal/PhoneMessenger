@@ -391,7 +391,7 @@ app.post("/send-batch-sms", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "No contacts to send to" });
     }
 
-    const resolvedMediaUrl = `${process.env.SERVER_URL}/images/Nelson.jpg`;
+    const resolvedMediaUrl = `${process.env.SERVER_URL}/images/Nelson2.png`;
 
     // Cancel any stale jobs just in case
     await agenda.cancel({ name: "send-sms-batch", "data.userId": userId });
@@ -521,7 +521,7 @@ async function sendMessagesInBatches(contacts, message, now, batchId) {
           body: message,
           from: process.env.TWILIO_NUMBER,
           to: contact.PhoneNumber,
-          mediaUrl: [`${process.env.SERVER_URL}/images/Nelson.jpg`],
+          mediaUrl: [`${process.env.SERVER_URL}/images/Nelson2.png`],
         });
         sent++;
         console.log(`✅ Sent to ${contact.PhoneNumber}`);
