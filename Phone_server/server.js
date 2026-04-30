@@ -32,7 +32,7 @@ const agenda = new Agenda({
   maxConcurrency: 1, // Ensure only one batch job runs at a time
 });
 
-const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const ONE_WEEK_MS = 2 * 24 * 60 * 60 * 1000;
 
 // Middleware
 app.use(
